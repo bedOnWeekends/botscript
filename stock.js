@@ -1,15 +1,20 @@
 const bot = BotManager.getCurrentBot();
 
-const stockList = ["주침정보통신"];
+const stockList = ["주침정보통신", "파덕총기상", "엔류성병연구소", "독노낚시터", "무지병뚜껑협회", "이브이멸종연구소", "또털기펫샵", "하이젠게임연구소", "제이햄부기", "라시카필름", "433센치"];
 const stockPath = "/sdcard/bot/stock/";
 const myStockPath = "/sdcard/bot/mystock/stock_status.json";
 const FS = FileStream;
 const pointPath = "/sdcard/attendance/exp.json";
+const checkDelistingPath = "/sdcard/bot/check_delisting.txt";
 
 
 const onMessage = (chat) => {
     const msg = chat.content;
+    
     switch (msg) {
+        case "1ㅈㅅ":
+            getCommand(chat);
+            break;
         case "1주식":
             getStockInfo(chat);
             break;
@@ -28,7 +33,14 @@ const onMessage = (chat) => {
 
 const addBlank = "\u200b".repeat(500);
 
-
+const getCommand = (chat) => {
+    let command = "주식 명령어\n\n";
+    command += "1주식: 주식 정보 조회\n";
+    command += "1내주식: 내 주식 정보 조회\n";
+    command += "1사기 [주식이름] [주식수량]: 주식 구매\n";
+    command += "1팔기 [주식이름] [주식수량]: 주식 판매\n";
+    chat.reply(command);
+}
 const getStockInfo = (chat) => {
     let stockInfo = "주식 정보\n\n" + addBlank;
     for (let i = 0; i < stockList.length; i++) {
@@ -37,10 +49,11 @@ const getStockInfo = (chat) => {
         stockInfo += "====================\n";
         let yearMonthDay = getYearMonthDay();
         let filePath = `${stockPath}${stockName}_${yearMonthDay}.json`;
-        const file = FS.read(filePath);
+        let file = FS.read(filePath);
         if (file) {
-            const timestamp = getTimestamp();
-            const recentPrice = JSON.parse(file)["stockPricePerTimeMap"][timestamp];
+            let timestamp = getTimestamp();
+            let map = JSON.parse(file)["stockPricePerTimeMap"];
+            let recentPrice = map[timestamp];
             if (recentPrice) {
                 stockInfo += `최근 가격: ${recentPrice}포인트\n\n`;
             }
@@ -63,24 +76,25 @@ const getMyStockInfo = (chat) => {
     }
     let myStockInfo = "내 주식 정보\n\n" + addBlank;
     for (let key in stockStatus[userHash]) {
-        const history = stockStatus[userHash][key];
+        let history = stockStatus[userHash][key];
+        let filePath = `${stockPath}${key}_${getYearMonthDay()}.json`;
+        let stockPrice = JSON.parse(FS.read(filePath))["stockPricePerTimeMap"][getTimestamp()];
+        let stockAmount = getStockAmount(history);
+        if (stockAmount <= 0) continue;
         myStockInfo += `${key}\n`;
         myStockInfo += "====================\n";
-        const filePath = `${stockPath}${key}_${getYearMonthDay()}.json`;
-        const stockPrice = JSON.parse(FS.read(filePath))["stockPricePerTimeMap"][getTimestamp()];
-        const stockAmount = getStockAmount(history);
         if (stockAmount > 0) {
             myStockInfo += `보유 주식 수: ${stockAmount}주\n`;
-            const profitRate = calculateProfitRate(history, stockPrice);
+            let profitRate = calculateProfitRate(history, stockPrice);
             if (profitRate) {
                 myStockInfo += `수익률: ${profitRate.toFixed(2)}%\n`;
-                myStockInfo += `현재 가격: ${stockPrice}포인트\n`;
+                myStockInfo += `현재 가격: ${stockPrice}포인트\n\n`;
             } else {
                 myStockInfo += "수익률: 0%\n";
-                myStockInfo += `현재 가격: ${stockPrice}포인트\n`;
+                myStockInfo += `현재 가격: ${stockPrice}포인트\n\n`;
             }
         }else {
-            myStockInfo += "보유 주식 수: 0주\n";
+            myStockInfo += "보유 주식 수: 0주\n\n";
         }
     }
     chat.reply(myStockInfo);
@@ -160,6 +174,10 @@ const buyStock = (chat) => {
     const timestamp = getTimestamp();
 
     const recentPrice = JSON.parse(file)["stockPricePerTimeMap"][timestamp];
+    if (recentPrice === 0){
+        chat.reply("주식 가격이 0포인트 입니다.");
+        return;
+    }
     const totalPrice = recentPrice * stockAmount;
     let point = JSON.parse(FS.read(pointPath));
     let userPoint = point[username];
@@ -213,6 +231,10 @@ const sellStock = (chat) => {
         chat.reply("해당 주식을 보유하고 있지 않습니다.");
         return;
     }
+    if (getStockAmount(stockStatus[userHash][stockName]) < stockAmount) {
+        chat.reply("보유한 주식 수량보다 많은 주식을 판매할 수 없습니다.");
+        return;
+    }
     const yearMonthDay = getYearMonthDay();
     const filePath = `${stockPath}${stockName}_${yearMonthDay}.json`;
     const file = FS.read(filePath);
@@ -244,6 +266,24 @@ const getYearMonthDay = () => {
 const getTimestamp = () => {
     let date = new Date();
     return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}${String(date.getHours()).padStart(2, "0")}${String(date.getMinutes()).padStart(2, "0")}${String(date.getSeconds()).padStart(2, "0")}`;
+}
+
+const checkDelisting = (chat) => {
+    const date = new Date();
+    let lastCheckDate = FS.read(checkDelistingPath);
+    if (!lastCheckDate) {
+        lastCheckDate = date.getHours();
+        FS.write(checkDelistingPath, lastCheckDate);
+        return;
+    }
+    lastCheckDate = Number(lastCheckDate);
+    const hour = date.getHours();
+    if (hour === lastCheckDate) return;
+    FS.write(checkDelistingPath,hour);
+
+    let allStock = JSON.parse(FS.read(stockPath));
+    let stockStatus = JSON.parse(FS.read(myStockPath));
+
 }
 
 
